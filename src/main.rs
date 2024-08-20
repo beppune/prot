@@ -4,16 +4,19 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::io::Read;
+use std::io::Write;
 
 enum Event {
     Accept(TcpStream),
     Read(TcpStream),
+    Write(TcpStream),
     StreamError(ErrorKind),
 }
 
 struct Demux {
     listener: TcpListener,
     toread: HashMap<String,TcpStream>,
+    towrite: HashMap<String,TcpStream>,
 }
 
 impl Demux {
@@ -23,7 +26,8 @@ impl Demux {
 
         Self {
             listener,
-            toread: HashMap::new()
+            toread: HashMap::new(),
+            towrite: HashMap::new(),
         }
     }
 
@@ -49,14 +53,24 @@ impl Demux {
 
         self.toread.insert( key, stream );
     }
+    
+    pub fn write(&mut self, stream: TcpStream) {
+        let key = stream.peer_addr().unwrap().to_string();
+
+        self.towrite.insert( key, stream );
+    }
 
     pub fn dispatch(&mut self, queue:&mut VecDeque<Event>) {
         if let Some(ev) = self.accept() {
             queue.push_back( ev );
         }
 
-        for (addr,stream) in self.toread.drain() {
+        for (_addr,stream) in self.toread.drain() {
             queue.push_back( Event::Read(stream) );
+        }
+
+        for (_addr,stream) in self.towrite.drain() {
+            queue.push_back( Event::Write(stream) );
         }
     }
 
@@ -95,9 +109,24 @@ fn main() {
                             print!( " bytes: {}: ", bytes );
                             let payload = std::str::from_utf8( &buffer[..bytes] ).unwrap();
                             println!("{}", payload);
+                            demux.write( peer );
                         },
                         Err(e) if e.kind() != ErrorKind::WouldBlock => {
                             println!(" Error while read: ");
+                        },
+                        _ => {}
+                    }
+                },
+                Event::Write(mut peer) => {
+                    print!("Write to {:?}", peer.peer_addr() );
+
+                    let buffer = "Thak You, Bye\n".as_bytes();
+                    match peer.write(&buffer) {
+                        Ok(bytes) => {
+                            println!( " bytes: {}: ", bytes );
+                        },
+                        Err(e) if e.kind() != ErrorKind::WouldBlock => {
+                            println!(" Error while write: ");
                         },
                         _ => {}
                     }
